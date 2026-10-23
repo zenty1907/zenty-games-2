@@ -133,7 +133,10 @@ revoke all on function public.place_pixel(integer, integer, text) from public;
 grant execute on function public.place_pixel(integer, integer, text) to authenticated;
 
 -- Realtime sync for the shared canvas.
-alter publication supabase_realtime add table public.pixels;
+do $ begin
+  alter publication supabase_realtime add table public.pixels;
+exception when duplicate_object then null;
+end $;
 
 
 -- Create a profile for every new account so pixel totals can be updated.
