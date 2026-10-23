@@ -80,9 +80,9 @@ function createTeam(){const name=$('modalName').value.trim();if(!name){toast('Bi
 function joinTeam(){const code=$('teamCode').value.trim().toUpperCase();if(!code){toast('Bir topluluk kodu gir.');return;}const t=state.teams.find(t=>t.code===code);if(!t){toast('Bu cihazda bu kodla kayıtlı topluluk yok. Çok oyunculu katılım henüz bağlı değil.');return;}state.team=code;save();renderTeams();$('teamCode').value='';toast(t.name+' topluluğuna katıldın!');}
 function addAuthUI(){
  const host=document.createElement('div');host.className='section';host.id='authSection';
- host.innerHTML='<div class="sectionhead"><span>🌐 Canlı sunucu</span><span class="status" id="connectionStatus"><i class="dot"></i> Bağlanıyor</span></div><p class="muted" id="authMessage">Ortak haritaya katılmak için e-posta ile giriş yap.</p><input class="input" id="authEmail" type="email" autocomplete="email" placeholder="E-posta adresin"><input class="input" id="authPassword" type="password" autocomplete="current-password" placeholder="Şifre (en az 6 karakter)"><div class="teamactions"><button class="btn primary smallbtn" id="signInBtn">Giriş yap</button><button class="btn smallbtn" id="signUpBtn">Hesap oluştur</button></div><button class="btn smallbtn" id="signOutBtn" style="display:none;width:100%;margin-top:7px">Çıkış yap</button>';
+ host.innerHTML='<div class="sectionhead"><span>🌐 Canlı sunucu</span><span class="status" id="connectionStatus"><i class="dot"></i> Bağlanıyor</span></div><p class="muted" id="authMessage">Kayıt için e-posta adresine gelen 6 haneli kodu doğrula.</p><input class="input" id="authEmail" type="email" autocomplete="email" placeholder="E-posta adresin"><input class="input" id="authPassword" type="password" autocomplete="new-password" placeholder="Şifre (en az 6 karakter)"><div class="teamactions"><button class="btn primary smallbtn" id="signInBtn">Giriş yap</button><button class="btn smallbtn" id="signUpBtn">Kayıt ol</button></div><div id="verifyArea" style="display:none;margin-top:9px"><label class="muted" for="authCode">E-postana gelen 6 haneli doğrulama kodu</label><input class="input" id="authCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Doğrulama kodu"><div class="teamactions"><button class="btn primary smallbtn" id="verifyCodeBtn">Kodu doğrula</button><button class="btn smallbtn" id="resendCodeBtn">Kodu tekrar gönder</button></div></div><button class="btn smallbtn" id="signOutBtn" style="display:none;width:100%;margin-top:7px">Çıkış yap</button>';
  const side=document.querySelector('.side');side.insertBefore(host,side.firstChild.nextSibling);
- $('signInBtn').onclick=()=>authAction('signin');$('signUpBtn').onclick=()=>authAction('signup');$('signOutBtn').onclick=async()=>{await sb.auth.signOut();toast('Çıkış yapıldı.');};
+ $('signInBtn').onclick=()=>authAction('signin');$('signUpBtn').onclick=()=>authAction('signup');$('verifyCodeBtn').onclick=verifySignupCode;$('resendCodeBtn').onclick=resendSignupCode;$('authCode').addEventListener('keydown',e=>{if(e.key==='Enter')verifySignupCode();});$('signOutBtn').onclick=async()=>{await sb.auth.signOut();toast('Çıkış yapıldı.');};
 }
 async function authAction(mode){
  if(!sb){toast('Supabase kitaplığı yüklenemedi.');return;}
@@ -90,8 +90,31 @@ async function authAction(mode){
  if(!email||password.length<6){toast('E-posta ve en az 6 karakterli şifre gir.');return;}
  const res=mode==='signup'?await sb.auth.signUp({email,password}):await sb.auth.signInWithPassword({email,password});
  if(res.error){toast(res.error.message);return;}
- if(mode==='signup'&&!res.data.session)toast('Hesap açıldı. E-postana gelen doğrulama bağlantısına bas, sonra giriş yap.');
+ if(mode==='signup'&&!res.data.session){
+  $('verifyArea').style.display='block';
+  $('authMessage').textContent='E-postana gönderilen kodu girerek hesabını doğrula. Gelen kutusu ve spam klasörünü kontrol et.';
+  $('authCode').focus();
+  toast('Doğrulama kodu e-postana gönderildi.');
+ }else if(mode==='signup'){toast('Kayıt ve giriş başarılı!');}
  else toast('Giriş başarılı!');
+}
+async function verifySignupCode(){
+ if(!sb)return;
+ const email=$('authEmail').value.trim(),token=$('authCode').value.trim();
+ if(!email||!token){toast('E-posta ve doğrulama kodunu gir.');return;}
+ const {data,error}=await sb.auth.verifyOtp({email,token,type:'signup'});
+ if(error){toast('Kod doğrulanamadı: '+error.message);return;}
+ $('verifyArea').style.display='none';
+ toast('E-posta doğrulandı! Hesabın açıldı.');
+ await updateAuth(data.session);
+}
+async function resendSignupCode(){
+ if(!sb)return;
+ const email=$('authEmail').value.trim();
+ if(!email){toast('Önce e-posta adresini yaz.');return;}
+ const {error}=await sb.auth.resend({type:'signup',email});
+ if(error){toast('Kod gönderilemedi: '+error.message);return;}
+ toast('Yeni doğrulama kodu gönderildi.');
 }
 async function loadSharedPixels(){
  if(!sb)return;
