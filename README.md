@@ -17,7 +17,9 @@ The frontend uses only the Supabase publishable key. No secret/service-role key 
 
 ## Features
 
-- OpenStreetMap world map with pan/zoom and location search
+- Label-free CARTO/OpenStreetMap basemap with pan/zoom and location search
+- Image-to-pixel template upload (PNG/JPG/WebP), palette reduction, width adjustment, map overlay, opacity control and removal
+- Pixel squares now render at the same 0.001-degree grid size used by database coordinates to avoid the previous oversized overlap
 - 16-color palette
 - Email/password sign-up and sign-in
 - Shared persistent pixel canvas across visitors
