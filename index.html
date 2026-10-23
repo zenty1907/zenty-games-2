@@ -33,9 +33,14 @@
 <div class="toast" id="toast"></div>
 <div class="modalbg" id="modalbg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><h2 id="modalTitle">Topluluk oluştur</h2><p id="modalDesc">Arkadaşlarınla aynı çizim için bir topluluk kur.</p><input class="input" id="modalName" placeholder="Topluluk adı" maxlength="28"><div class="modalactions"><button class="btn" id="cancelModal">İptal</button><button class="btn primary" id="confirmModal">Oluştur</button></div></div></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (()=>{'use strict';
 const $=id=>document.getElementById(id), KEY='zenty-place-v1';
+const SUPABASE_URL='https://tcwahzdlcnewkegwxruf.supabase.co';
+const SUPABASE_KEY='sb_publishable_6-V-ebEP7Toteuv47OX7GA_7gURvH3z';
+const sb=(window.supabase&&window.supabase.createClient)?window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
+let currentUser=null, realtimeChannel=null, serverCooldownUntil=0;
 const colors=['#FF4D6D','#FF8A3D','#FFD166','#7BD88F','#28C7A5','#36C5F0','#4D7CFE','#9061F9','#D65DB1','#FFFFFF','#C9D1E4','#64748B','#333333','#111111','#8B5E3C','#F4A7BB'];
 let state={pixels:[],charges:5,lastCharge:Date.now(),myPixels:0,selected:colors[0],team:null,teams:[],username:'Pixelci'};
 try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');if(saved&&typeof saved==='object')state={...state,...saved};}catch{}
@@ -53,15 +58,67 @@ function renderTeams(){const area=$('teamArea');area.innerHTML='';if(!state.team
 function renderPixel(p){const size=.018;const bounds=[[p.lat-size/2,p.lng-size/2],[p.lat+size/2,p.lng+size/2]];const r=L.rectangle(bounds,{color:p.color,weight:0,fillColor:p.color,fillOpacity:1,interactive:false}).addTo(pixelLayer);markers.push(r);}
 function redrawPixels(){pixelLayer.clearLayers();markers=[];state.pixels.forEach(renderPixel);}
 function updateCoords(latlng){selectedLatLng=latlng;$('coords').textContent=latlng.lat.toFixed(5)+', '+latlng.lng.toFixed(5);$('placeName').textContent='Seçilen konum · '+(latlng.lat>=0?'Kuzey':'Güney')+' '+(latlng.lng>=0?'Doğu':'Batı');$('mapTip').innerHTML='<b>Konum seçildi.</b> Seçili renkle piksel bırakmak için haritaya tekrar dokun.';}
-function placePixel(latlng){updateCoords(latlng);if(state.charges<=0){toast('Piksel enerjin bitti. Yeni hak için geri sayımı bekle.');return;}if(state.charges===5)state.lastCharge=Date.now();const p={lat:latlng.lat,lng:latlng.lng,color:state.selected,by:state.username,at:Date.now(),team:state.team||null};state.pixels.push(p);state.charges--;state.myPixels++;if(state.team){const t=state.teams.find(t=>t.code===state.team);if(t)t.pixels=(t.pixels||0)+1;}save();renderPixel(p);chargeTick();renderStats();toast('Piksel bırakıldı! '+p.lat.toFixed(3)+', '+p.lng.toFixed(3));}
+async function placePixel(latlng){updateCoords(latlng);
+if(!sb){toast('Çevrimiçi bağlantı yüklenemedi.');return;}
+if(!currentUser){toast('Ortak haritaya piksel koymak için önce giriş yap.');return;}
+if(Date.now()<serverCooldownUntil){toast('Sunucu piksel bekleme süresini kontrol ediyor.');return;}
+const x=Math.round(latlng.lng*1000), y=Math.round(latlng.lat*1000);
+const {data,error}=await sb.rpc('place_pixel',{p_x:x,p_y:y,p_color:state.selected});
+if(error){toast(error.message.includes('Giriş')?'Önce giriş yap.':error.message);return;}
+serverCooldownUntil=Date.now()+30000;
+const p={lat:y/1000,lng:x/1000,color:state.selected,by:currentUser.id,at:Date.now()};
+const idx=state.pixels.findIndex(v=>Math.round(v.lat*1000)===y&&Math.round(v.lng*1000)===x);
+if(idx>=0)state.pixels[idx]=p;else state.pixels.push(p);
+state.myPixels++;save();redrawPixels();renderStats();toast('Piksel ortak haritaya kaydedildi!');}
 function copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(()=>toast('Kopyalandı!')).catch(()=>fallbackCopy(text));else fallbackCopy(text);}
 function fallbackCopy(text){const i=document.createElement('textarea');i.value=text;document.body.appendChild(i);i.select();try{document.execCommand('copy');toast('Kopyalandı!');}catch{toast(text)}i.remove();}
 function openTeamModal(mode){teamMode=mode;$('modalTitle').textContent=mode==='create'?'Topluluk oluştur':'Topluluğa katıl';$('modalDesc').textContent=mode==='create'?'Bir ad seç. Bu prototipte topluluk yalnızca bu tarayıcıda kaydedilir.':'Katılmak için topluluk kodunu soldaki alana yaz.';$('modalName').placeholder=mode==='create'?'Topluluk adı':'Topluluk adı';$('modalName').value='';$('modalbg').classList.add('open');if(mode==='create')setTimeout(()=>$('modalName').focus(),50);}
 function createTeam(){const name=$('modalName').value.trim();if(!name){toast('Bir topluluk adı yaz.');return;}if(state.teams.length>=20){toast('Bu cihazda en fazla 20 topluluk saklanabilir.');return;}const code=Math.random().toString(36).slice(2,7).toUpperCase();const team={name,code,pixels:0,created:Date.now()};state.teams.push(team);state.team=code;save();renderStats();$('modalbg').classList.remove('open');toast('Topluluk oluşturuldu! Kod: '+code);}
 function joinTeam(){const code=$('teamCode').value.trim().toUpperCase();if(!code){toast('Bir topluluk kodu gir.');return;}const t=state.teams.find(t=>t.code===code);if(!t){toast('Bu cihazda bu kodla kayıtlı topluluk yok. Çok oyunculu katılım henüz bağlı değil.');return;}state.team=code;save();renderTeams();$('teamCode').value='';toast(t.name+' topluluğuna katıldın!');}
+function addAuthUI(){
+ const host=document.createElement('div');host.className='section';host.id='authSection';
+ host.innerHTML='<div class="sectionhead"><span>🌐 Canlı sunucu</span><span class="status" id="connectionStatus"><i class="dot"></i> Bağlanıyor</span></div><p class="muted" id="authMessage">Ortak haritaya katılmak için e-posta ile giriş yap.</p><input class="input" id="authEmail" type="email" autocomplete="email" placeholder="E-posta adresin"><input class="input" id="authPassword" type="password" autocomplete="current-password" placeholder="Şifre (en az 6 karakter)"><div class="teamactions"><button class="btn primary smallbtn" id="signInBtn">Giriş yap</button><button class="btn smallbtn" id="signUpBtn">Hesap oluştur</button></div><button class="btn smallbtn" id="signOutBtn" style="display:none;width:100%;margin-top:7px">Çıkış yap</button>';
+ const side=document.querySelector('.side');side.insertBefore(host,side.firstChild.nextSibling);
+ $('signInBtn').onclick=()=>authAction('signin');$('signUpBtn').onclick=()=>authAction('signup');$('signOutBtn').onclick=async()=>{await sb.auth.signOut();toast('Çıkış yapıldı.');};
+}
+async function authAction(mode){
+ if(!sb){toast('Supabase kitaplığı yüklenemedi.');return;}
+ const email=$('authEmail').value.trim(),password=$('authPassword').value;
+ if(!email||password.length<6){toast('E-posta ve en az 6 karakterli şifre gir.');return;}
+ const res=mode==='signup'?await sb.auth.signUp({email,password}):await sb.auth.signInWithPassword({email,password});
+ if(res.error){toast(res.error.message);return;}
+ if(mode==='signup'&&!res.data.session)toast('Hesap açıldı. E-postana gelen doğrulama bağlantısına bas, sonra giriş yap.');
+ else toast('Giriş başarılı!');
+}
+async function loadSharedPixels(){
+ if(!sb)return;
+ const {data,error}=await sb.from('pixels').select('x,y,color,created_at,user_id').order('created_at',{ascending:true}).limit(10000);
+ if(error){console.warn(error);toast('Veritabanı henüz hazır değil. Supabase SQL dosyasını çalıştır.');return;}
+ state.pixels=data.map(p=>({lat:p.y/1000,lng:p.x/1000,color:p.color,by:p.user_id,at:new Date(p.created_at).getTime()}));
+ redrawPixels();$('worldPixels').textContent=state.pixels.length;
+ if(realtimeChannel)await sb.removeChannel(realtimeChannel);
+ realtimeChannel=sb.channel('zenty-live-pixels').on('postgres_changes',{event:'*',schema:'public',table:'pixels'},payload=>{
+  const raw=payload.new&&payload.new.x!==undefined?payload.new:payload.old;
+  if(!raw)return;
+  const idx=state.pixels.findIndex(p=>Math.round(p.lng*1000)===raw.x&&Math.round(p.lat*1000)===raw.y);
+  if(payload.eventType==='DELETE'){if(idx>=0)state.pixels.splice(idx,1);}
+  else {const p={lat:raw.y/1000,lng:raw.x/1000,color:raw.color,by:raw.user_id,at:new Date(raw.created_at).getTime()};if(idx>=0)state.pixels[idx]=p;else state.pixels.push(p);}
+  redrawPixels();$('worldPixels').textContent=state.pixels.length;save();
+ }).subscribe();
+}
+async function updateAuth(session){
+ currentUser=session?.user||null;
+ $('connectionStatus').innerHTML=currentUser?'● Çevrimiçi':'<i class="dot"></i> Giriş gerekli';
+ $('authMessage').textContent=currentUser?'Giriş yapıldı: '+currentUser.email:'Ortak haritaya katılmak için e-posta ile giriş yap.';
+ $('signInBtn').style.display=currentUser?'none':'';$('signUpBtn').style.display=currentUser?'none':'';
+ $('signOutBtn').style.display=currentUser?'block':'none';
+ if(currentUser){state.username=(currentUser.email||'Pixelci').split('@')[0];const {data}=await sb.from('profiles').select('pixels_placed').eq('id',currentUser.id).maybeSingle();state.myPixels=data?.pixels_placed||0;renderStats();}
+ await loadSharedPixels();
+}
 async function searchPlace(q){if(!q.trim())return;toast('Konum aranıyor…');try{const url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(q);const res=await fetch(url,{headers:{'Accept-Language':'tr'}});if(!res.ok)throw Error('search');const data=await res.json();if(!data.length){toast('Konum bulunamadı. Başka bir ad dene.');return;}const d=data[0],ll=L.latLng(Number(d.lat),Number(d.lon));map.setView(ll,Math.max(map.getZoom(),12));updateCoords(ll);toast(d.display_name.split(',').slice(0,3).join(','));}catch{toast('Konum araması yapılamadı. İnternet bağlantını kontrol et.');}}
 function help(){toast('Renk seç → haritada bir noktaya dokun → pikselini bırak. Her 30 sn +1 hak, en fazla 5 hak.');}
 function init(){if(!window.L){$('map').innerHTML='<div style="padding:30px;color:#222">Harita kütüphanesi yüklenemedi. İnternet bağlantısını kontrol edip sayfayı yenile.</div>';return;}
+addAuthUI();
 map=L.map('map',{worldCopyJump:true,zoomControl:true,minZoom:2,maxZoom:19}).setView([25,10],2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>',crossOrigin:true}).addTo(map);
 pixelLayer=L.layerGroup().addTo(map);redrawPixels();
@@ -71,7 +128,7 @@ $('locBtn').onclick=()=>{if(selectedLatLng)map.setView(selectedLatLng,Math.max(1
 $('searchForm').addEventListener('submit',e=>{e.preventDefault();searchPlace($('searchInput').value);});
 $('createTeamBtn').onclick=()=>openTeamModal('create');$('joinTeamBtn').onclick=joinTeam;$('confirmModal').onclick=createTeam;$('cancelModal').onclick=()=>$('modalbg').classList.remove('open');$('modalbg').addEventListener('click',e=>{if(e.target===$('modalbg'))$('modalbg').classList.remove('open')});$('helpBtn').onclick=help;
 $('copyCoords').onclick=()=>selectedLatLng?copyText(selectedLatLng.lat.toFixed(5)+', '+selectedLatLng.lng.toFixed(5)):toast('Önce haritada bir yer seç.');
-$('modalName').addEventListener('keydown',e=>{if(e.key==='Enter')createTeam();});renderPalette();chargeTick();renderStats();setInterval(chargeTick,1000);setInterval(()=>{if(map)map.invalidateSize();},600);
+$('modalName').addEventListener('keydown',e=>{if(e.key==='Enter')createTeam();});renderPalette();chargeTick();renderStats();if(sb){sb.auth.getSession().then(({data})=>updateAuth(data.session));sb.auth.onAuthStateChange((_event,session)=>{setTimeout(()=>updateAuth(session),0);});}else{$('authMessage').textContent='Bağlantı kütüphanesi yüklenemedi.';}setInterval(chargeTick,1000);setInterval(()=>{if(map)map.invalidateSize();},600);
 }
 init();
 })();
