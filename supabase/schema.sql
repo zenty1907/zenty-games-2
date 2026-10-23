@@ -134,3 +134,29 @@ grant execute on function public.place_pixel(integer, integer, text) to authenti
 
 -- Realtime sync for the shared canvas.
 alter publication supabase_realtime add table public.pixels;
+
+
+-- Create a profile for every new account so pixel totals can be updated.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  base_name text;
+  chosen_name text;
+begin
+  base_name := coalesce(nullif(regexp_replace(split_part(new.email, '@', 1), '[^a-zA-Z0-9_]', '', 'g'), ''), 'pixelci');
+  chosen_name := left(base_name, 14) || '_' || left(replace(new.id::text, '-', ''), 5);
+  insert into public.profiles(id, username)
+  values (new.id, chosen_name)
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_zenty on auth.users;
+create trigger on_auth_user_created_zenty
+after insert on auth.users
+for each row execute procedure public.handle_new_user();
